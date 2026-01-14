@@ -47,10 +47,8 @@ export default function PlanningPoker() {
 
   const hasRoomInURL = getRoomFromURL() !== '';
 
-  // Écouter les changements de la room
   useEffect(() => {
     if (!roomCode) return;
-
     const roomRef = ref(database, `rooms/${roomCode}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
       const data = snapshot.val();
@@ -62,26 +60,20 @@ export default function PlanningPoker() {
         });
       }
     });
-
     return () => unsubscribe();
   }, [roomCode]);
 
-  // Synchroniser selectedCard avec les données Firebase
   useEffect(() => {
     if (playerId && players[playerId]) {
-      const myVote = players[playerId].vote;
-      setSelectedCard(myVote);
+      setSelectedCard(players[playerId].vote);
     }
   }, [players, playerId]);
 
-  // Nettoyer le joueur quand il quitte
   useEffect(() => {
     if (!roomCode || !playerId) return;
-
     const handleBeforeUnload = () => {
       remove(ref(database, `rooms/${roomCode}/players/${playerId}`));
     };
-
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -94,10 +86,8 @@ export default function PlanningPoker() {
       setError('Entrez votre nom');
       return;
     }
-
     const code = generateRoomCode();
     const id = Date.now().toString();
-    
     await set(ref(database, `rooms/${code}`), {
       createdAt: Date.now(),
       revealed: false,
@@ -111,7 +101,6 @@ export default function PlanningPoker() {
         }
       }
     });
-
     setPlayerId(id);
     setRoomCode(code);
     setScreen('game');
@@ -127,10 +116,8 @@ export default function PlanningPoker() {
       setError('Entrez le code de la room');
       return;
     }
-
     const code = joinCode.toUpperCase().trim();
     const id = Date.now().toString();
-
     try {
       await set(ref(database, `rooms/${code}/players/${id}`), {
         name: playerName.trim(),
@@ -138,7 +125,6 @@ export default function PlanningPoker() {
         isHost: false,
         isObserver: isObserver
       });
-
       setPlayerId(id);
       setRoomCode(code);
       setScreen('game');
@@ -159,19 +145,10 @@ export default function PlanningPoker() {
   };
 
   const handleReset = async () => {
-    // Réinitialiser revealed ET tous les votes en une seule opération
-    const updates = {
-      revealed: false
-    };
-    
-    // Mettre à jour la room
     await set(ref(database, `rooms/${roomCode}/revealed`), false);
-    
-    // Réinitialiser tous les votes
-    const resetPromises = Object.keys(players).map(pid => 
+    const resetPromises = Object.keys(players).map(pid =>
       set(ref(database, `rooms/${roomCode}/players/${pid}/vote`), null)
     );
-    
     await Promise.all(resetPromises);
   };
 
@@ -186,7 +163,6 @@ export default function PlanningPoker() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Filtrer les joueurs votants (non observateurs)
   const voters = Object.entries(players)
     .filter(([_, data]) => !data.isObserver)
     .map(([id, data]) => ({ id, ...data }));
@@ -195,7 +171,6 @@ export default function PlanningPoker() {
     .filter(([_, data]) => data.isObserver)
     .map(([id, data]) => ({ id, ...data }));
 
-  // Calcul correct du nombre de votants
   const votedCount = voters.filter(p => p.vote !== null && p.vote !== undefined).length;
   const totalVoters = voters.length;
 
@@ -203,113 +178,114 @@ export default function PlanningPoker() {
     const numericVotes = voters
       .filter(p => p.vote && !isNaN(parseInt(p.vote)))
       .map(p => parseInt(p.vote));
-    
     if (numericVotes.length === 0) return { avg: '-', min: '-', max: '-' };
-    
     const avg = numericVotes.reduce((a, b) => a + b, 0) / numericVotes.length;
-    const min = Math.min(...numericVotes);
-    const max = Math.max(...numericVotes);
-    
     return {
       avg: avg.toFixed(1),
-      min: min.toString(),
-      max: max.toString()
+      min: Math.min(...numericVotes).toString(),
+      max: Math.max(...numericVotes).toString()
     };
   };
 
-  // Écran d'accueil
   if (screen === 'home') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-4">
-        <div className="bg-white/10 backdrop-blur-lg rounded-3xl p-8 w-full max-w-md shadow-2xl border border-white/20">
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl border border-orange-100 p-8 w-full max-w-md">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-white mb-2">🃏 Planning Poker</h1>
-            <p className="text-purple-200">Estimez vos stories en équipe</p>
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-orange-400 to-rose-500 rounded-2xl mb-4 shadow-lg">
+              <span className="text-3xl">🎯</span>
+            </div>
+            <h1 className="text-2xl font-bold text-gray-800 mb-1">Planning Poker</h1>
+            <p className="text-gray-500 text-sm">Estimation collaborative pour équipes agiles</p>
           </div>
 
           {hasRoomInURL && (
-            <div className="bg-green-500/20 border border-green-400/30 rounded-xl p-4 mb-6 text-center">
-              <p className="text-green-300 text-sm mb-1">Vous avez été invité à rejoindre</p>
-              <p className="text-white font-mono font-bold text-xl tracking-widest">{joinCode}</p>
+            <div className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-xl p-4 mb-6 text-center">
+              <p className="text-orange-700 text-sm mb-1">Vous avez été invité à rejoindre</p>
+              <p className="text-gray-800 font-mono font-bold text-xl tracking-widest">{joinCode}</p>
             </div>
           )}
-          
+
           <div className="flex flex-col gap-4 mb-6">
-            <input
-              type="text"
-              placeholder="Votre nom"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400"
-            />
-            
-            <div className="flex gap-2">
-              <button
-                onClick={() => setIsObserver(false)}
-                className={`flex-1 py-3 rounded-xl font-medium transition-all ${
-                  !isObserver 
-                    ? 'bg-purple-500 text-white' 
-                    : 'bg-white/10 text-purple-300 hover:bg-white/20'
-                }`}
-              >
-                🗳️ Votant
-              </button>
-              <button
-                onClick={() => setIsObserver(true)}
-                className={`flex-1 py-3 rounded-xl font-medium transition-all ${
-                  isObserver 
-                    ? 'bg-purple-500 text-white' 
-                    : 'bg-white/10 text-purple-300 hover:bg-white/20'
-                }`}
-              >
-                👁️ Observateur
-              </button>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Votre nom</label>
+              <input
+                type="text"
+                placeholder="Jean Dupont"
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Rôle</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setIsObserver(false)}
+                  className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all ${
+                    !isObserver
+                      ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-md'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  🗳️ Votant
+                </button>
+                <button
+                  onClick={() => setIsObserver(true)}
+                  className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all ${
+                    isObserver
+                      ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-md'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  👁️ Observateur
+                </button>
+              </div>
             </div>
           </div>
 
           {error && (
-            <p className="text-red-300 text-center mb-4">{error}</p>
+            <p className="text-red-500 text-sm text-center mb-4 bg-red-50 py-2 rounded-lg">{error}</p>
           )}
 
           {hasRoomInURL ? (
             <button
               onClick={joinRoom}
-              className="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all transform hover:scale-105 shadow-lg"
+              className="w-full py-3 bg-gradient-to-r from-orange-500 to-rose-500 text-white font-semibold rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
             >
-              🚀 Rejoindre la session
+              Rejoindre la session
             </button>
           ) : (
             <>
-              <div className="flex flex-col gap-3 mb-6">
-                <button
-                  onClick={createRoom}
-                  className="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105 shadow-lg"
-                >
-                  ✨ Créer une nouvelle room
-                </button>
-              </div>
+              <button
+                onClick={createRoom}
+                className="w-full py-3 bg-gradient-to-r from-orange-500 to-rose-500 text-white font-semibold rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 mb-4"
+              >
+                ✨ Créer une session
+              </button>
 
-              <div className="relative mb-6">
+              <div className="relative mb-4">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-white/20"></div>
+                  <div className="w-full border-t border-gray-200"></div>
                 </div>
                 <div className="relative flex justify-center">
-                  <span className="bg-transparent px-4 text-purple-300 text-sm">ou rejoindre</span>
+                  <span className="bg-white px-3 text-gray-400 text-sm">ou rejoindre</span>
                 </div>
               </div>
 
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Code de la room"
+                  placeholder="CODE"
                   value={joinCode}
                   onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                   maxLength={6}
-                  className="flex-1 px-4 py-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400 uppercase tracking-widest text-center font-mono"
+                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 uppercase tracking-widest text-center font-mono focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
                 />
                 <button
                   onClick={joinRoom}
-                  className="px-6 py-3 bg-white/20 text-white font-semibold rounded-xl hover:bg-white/30 transition-all"
+                  className="px-5 py-2.5 bg-gray-800 text-white font-medium rounded-xl hover:bg-gray-700 transition-all"
                 >
                   Rejoindre
                 </button>
@@ -324,165 +300,176 @@ export default function PlanningPoker() {
   const stats = getVoteStats();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 p-4">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row items-center justify-between mb-6 gap-4">
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50">
+      {/* Header */}
+      <header className="bg-white/80 backdrop-blur-sm border-b border-orange-100 px-4 py-3 sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold text-white">🃏 Planning Poker</h1>
-            <div className="bg-white/20 px-4 py-2 rounded-xl flex items-center gap-2">
-              <span className="text-purple-200 text-sm">Room:</span>
-              <span className="text-white font-mono font-bold tracking-widest">{roomCode}</span>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-gradient-to-br from-orange-400 to-rose-500 rounded-lg flex items-center justify-center">
+                <span className="text-sm">🎯</span>
+              </div>
+              <h1 className="text-lg font-bold text-gray-800">Planning Poker</h1>
+            </div>
+            <div className="flex items-center gap-2 bg-orange-50 px-3 py-1.5 rounded-lg border border-orange-100">
+              <span className="text-orange-600 text-sm">Room:</span>
+              <span className="font-mono font-bold text-gray-800 tracking-wider">{roomCode}</span>
               <button
                 onClick={copyLink}
-                className="ml-2 text-purple-300 hover:text-white transition-colors"
-                title="Copier le lien"
+                className="ml-1 text-orange-400 hover:text-orange-600 transition-colors"
               >
-                {copied ? '✅' : '📋'}
+                {copied ? (
+                  <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                )}
               </button>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-purple-200">
-              👤 {playerName} {isObserver && '(observateur)'}
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+              {playerName} {isObserver && '👁️'}
             </span>
-            <span className="text-purple-300">•</span>
-            <span className="text-purple-200">
+            <span className="text-orange-500 font-medium">
               {voters.length} votant{voters.length > 1 ? 's' : ''}
-              {observers.length > 0 && `, ${observers.length} observateur${observers.length > 1 ? 's' : ''}`}
+              {observers.length > 0 && <span className="text-gray-400"> + {observers.length} obs.</span>}
             </span>
           </div>
         </div>
+      </header>
 
-        {/* Story actuelle */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-6 border border-white/20">
-          <div className="flex items-center gap-2 text-purple-300 text-sm mb-2">
-            <span>📋</span>
-            <span>Story en cours d'estimation</span>
-          </div>
+      <main className="max-w-5xl mx-auto p-4 flex flex-col gap-4">
+        {/* Story */}
+        <div className="bg-white rounded-xl shadow-sm border border-orange-100 p-5">
+          <label className="block text-xs font-semibold text-orange-500 uppercase tracking-wide mb-2">📋 Story à estimer</label>
           <input
             type="text"
             value={roomData.story}
             onChange={(e) => updateStory(e.target.value)}
-            className="w-full bg-transparent text-white text-xl font-medium focus:outline-none"
-            placeholder="Décrivez la story à estimer..."
+            className="w-full text-lg text-gray-800 font-medium bg-transparent focus:outline-none"
+            placeholder="Décrivez la story..."
           />
         </div>
 
-        {/* Table de vote */}
-        <div className="bg-white/5 backdrop-blur-lg rounded-3xl p-8 mb-6 border border-white/10">
-          <div className="text-center mb-4">
-            <span className="text-purple-300">
-              {roomData.revealed 
-                ? '🎉 Votes révélés !' 
+        {/* Voting area */}
+        <div className="bg-white rounded-xl shadow-sm border border-orange-100 p-6">
+          <div className="text-center mb-6">
+            <span className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium ${
+              roomData.revealed 
+                ? 'bg-green-100 text-green-700' 
+                : votedCount === totalVoters && totalVoters > 0
+                  ? 'bg-orange-100 text-orange-700'
+                  : 'bg-gray-100 text-gray-600'
+            }`}>
+              {roomData.revealed
+                ? '✨ Votes révélés !'
                 : votedCount === 0
-                  ? `En attente des votes (0/${totalVoters})`
-                  : `${votedCount}/${totalVoters} votant${votedCount > 1 ? 's ont' : ' a'} voté`}
+                  ? `⏳ En attente des votes (0/${totalVoters})`
+                  : votedCount === totalVoters
+                    ? `🎉 Tout le monde a voté !`
+                    : `${votedCount}/${totalVoters} vote${votedCount > 1 ? 's' : ''}`}
             </span>
           </div>
 
-          {/* Votants */}
-          <div className="flex flex-wrap justify-center gap-6 mb-6">
+          {/* Voters */}
+          <div className="flex flex-wrap justify-center gap-5 mb-6">
             {voters.map((player) => (
               <div key={player.id} className="flex flex-col items-center gap-2">
-                <div 
-                  className={`w-16 h-24 rounded-xl flex items-center justify-center text-2xl font-bold transition-all duration-500 ${
+                <div
+                  className={`w-16 h-24 rounded-xl flex items-center justify-center text-2xl font-bold transition-all shadow-md ${
                     player.vote !== null && player.vote !== undefined
-                      ? roomData.revealed 
-                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white' 
-                        : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
-                      : 'bg-white/10 border-2 border-dashed border-white/30 text-white/30'
+                      ? roomData.revealed
+                        ? 'bg-gradient-to-br from-orange-400 to-rose-500 text-white'
+                        : 'bg-gradient-to-br from-gray-700 to-gray-800 text-white'
+                      : 'bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-dashed border-gray-300 text-gray-400'
                   }`}
                 >
                   {player.vote !== null && player.vote !== undefined
-                    ? roomData.revealed 
-                      ? player.vote 
-                      : '✓'
+                    ? roomData.revealed ? player.vote : '✓'
                     : '?'}
                 </div>
-                <span className={`font-medium ${player.id === playerId ? 'text-yellow-300' : 'text-white'}`}>
-                  {player.name} {player.id === playerId && '(vous)'}
+                <span className={`text-sm font-medium ${player.id === playerId ? 'text-orange-600' : 'text-gray-600'}`}>
+                  {player.name}
                 </span>
-                {player.isHost && (
-                  <span className="text-xs bg-yellow-500/30 text-yellow-300 px-2 py-0.5 rounded-full">Host</span>
-                )}
               </div>
             ))}
           </div>
 
-          {/* Observateurs */}
+          {/* Observers */}
           {observers.length > 0 && (
-            <div className="mb-6 pt-4 border-t border-white/10">
-              <p className="text-purple-400 text-sm text-center mb-3">👁️ Observateurs</p>
-              <div className="flex flex-wrap justify-center gap-3">
-                {observers.map((observer) => (
-                  <span 
-                    key={observer.id}
-                    className={`px-3 py-1 rounded-full text-sm ${
-                      observer.id === playerId 
-                        ? 'bg-yellow-500/30 text-yellow-300' 
-                        : 'bg-white/10 text-purple-300'
+            <div className="pt-4 border-t border-gray-100 mb-6">
+              <p className="text-xs text-gray-400 text-center mb-2 uppercase tracking-wide">👁️ Observateurs</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {observers.map((obs) => (
+                  <span
+                    key={obs.id}
+                    className={`px-3 py-1 rounded-full text-xs font-medium ${
+                      obs.id === playerId ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
                     }`}
                   >
-                    {observer.name} {observer.id === playerId && '(vous)'}
+                    {obs.name}
                   </span>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Résultats */}
+          {/* Results */}
           {roomData.revealed && (
-            <div className="mb-6 p-4 bg-white/10 rounded-xl">
+            <div className="bg-gradient-to-r from-orange-50 to-rose-50 rounded-xl p-5 mb-6 border border-orange-100">
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
-                  <p className="text-purple-300 text-sm mb-1">⬇️ Min</p>
-                  <p className="text-2xl font-bold text-white">{stats.min}</p>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">⬇️ Min</p>
+                  <p className="text-3xl font-bold text-gray-800">{stats.min}</p>
+                </div>
+                <div className="border-x border-orange-200">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">📊 Moyenne</p>
+                  <p className="text-4xl font-bold bg-gradient-to-r from-orange-500 to-rose-500 bg-clip-text text-transparent">{stats.avg}</p>
                 </div>
                 <div>
-                  <p className="text-purple-300 text-sm mb-1">📊 Moyenne</p>
-                  <p className="text-3xl font-bold text-white">{stats.avg}</p>
-                </div>
-                <div>
-                  <p className="text-purple-300 text-sm mb-1">⬆️ Max</p>
-                  <p className="text-2xl font-bold text-white">{stats.max}</p>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">⬆️ Max</p>
+                  <p className="text-3xl font-bold text-gray-800">{stats.max}</p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Boutons de contrôle */}
-          <div className="flex justify-center gap-4">
+          {/* Controls */}
+          <div className="flex justify-center gap-3">
             <button
               onClick={handleReveal}
               disabled={roomData.revealed || votedCount === 0}
-              className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+              className="px-6 py-2.5 bg-gradient-to-r from-orange-500 to-rose-500 text-white text-sm font-semibold rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md"
             >
               👁️ Révéler ({votedCount}/{totalVoters})
             </button>
             <button
               onClick={handleReset}
-              className="px-6 py-3 bg-white/20 text-white font-semibold rounded-xl hover:bg-white/30 transition-all shadow-lg"
+              className="px-6 py-2.5 bg-gray-100 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-200 transition-all"
             >
               🔄 Nouveau vote
             </button>
           </div>
         </div>
 
-        {/* Cartes de vote */}
+        {/* Cards */}
         {!isObserver ? (
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <p className="text-purple-300 text-sm mb-4 text-center">Choisissez votre estimation</p>
+          <div className="bg-white rounded-xl shadow-sm border border-orange-100 p-5">
+            <p className="text-xs text-orange-500 text-center mb-4 uppercase tracking-wide font-semibold">🃏 Votre estimation</p>
             <div className="flex flex-wrap justify-center gap-3">
               {CARD_VALUES.map((value) => (
                 <button
                   key={value}
                   onClick={() => handleVote(value)}
                   disabled={roomData.revealed}
-                  className={`w-14 h-20 rounded-xl text-xl font-bold transition-all transform hover:scale-110 hover:-translate-y-2 shadow-lg ${
+                  className={`w-14 h-20 rounded-xl text-xl font-bold transition-all transform hover:scale-110 hover:-translate-y-1 ${
                     selectedCard === value
-                      ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white ring-4 ring-purple-300'
-                      : 'bg-white text-gray-800 hover:bg-purple-100'
+                      ? 'bg-gradient-to-br from-orange-500 to-rose-500 text-white shadow-lg ring-4 ring-orange-200'
+                      : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-orange-300 hover:shadow-md'
                   } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:translate-y-0`}
                 >
                   {value}
@@ -491,16 +478,11 @@ export default function PlanningPoker() {
             </div>
           </div>
         ) : (
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 text-center">
-            <p className="text-purple-300">👁️ Vous êtes observateur - vous pouvez voir les votes mais pas participer</p>
+          <div className="bg-white rounded-xl shadow-sm border border-orange-100 p-5 text-center">
+            <p className="text-sm text-gray-500">👁️ Mode observateur — vous ne participez pas au vote</p>
           </div>
         )}
-
-        {/* Footer */}
-        <div className="text-center mt-6 text-purple-300 text-sm">
-          <p>🔗 Partagez le code <span className="font-mono font-bold">{roomCode}</span> ou cliquez sur 📋 pour copier le lien</p>
-        </div>
-      </div>
+      </main>
     </div>
   );
 }
