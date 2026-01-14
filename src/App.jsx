@@ -1,7 +1,6 @@
-
 import { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, onValue, remove, push } from 'firebase/database';
+import { getDatabase, ref, set, onValue, remove } from 'firebase/database';
 
 // 🔥 REMPLACEZ PAR VOTRE CONFIG FIREBASE
 const firebaseConfig = {
@@ -14,7 +13,6 @@ const firebaseConfig = {
   appId: "1:770949471783:web:e9a7ad49d7787706a5b802"
 };
 
-// Initialiser Firebase
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
@@ -29,16 +27,27 @@ const generateRoomCode = () => {
   return code;
 };
 
+// Extraire le code de room depuis l'URL
+const getRoomFromURL = () => {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('room')?.toUpperCase() || '';
+};
+
 export default function PlanningPoker() {
   const [screen, setScreen] = useState('home');
   const [playerName, setPlayerName] = useState('');
   const [playerId, setPlayerId] = useState('');
   const [roomCode, setRoomCode] = useState('');
-  const [joinCode, setJoinCode] = useState('');
+  const [joinCode, setJoinCode] = useState(getRoomFromURL());
+  const [isObserver, setIsObserver] = useState(false);
   const [players, setPlayers] = useState({});
   const [roomData, setRoomData] = useState({ revealed: false, story: '' });
   const [selectedCard, setSelectedCard] = useState(null);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  // Détecter si on arrive via un lien partagé
+  const hasRoomInURL = getRoomFromURL() !== '';
 
   // Écouter les changements de la room
   useEffect(() => {
@@ -91,7 +100,8 @@ export default function PlanningPoker() {
         [id]: {
           name: playerName.trim(),
           vote: null,
-          isHost: true
+          isHost: true,
+          isObserver: isObserver
         }
       }
     });
@@ -99,6 +109,9 @@ export default function PlanningPoker() {
     setPlayerId(id);
     setRoomCode(code);
     setScreen('game');
+    
+    // Mettre à jour l'URL sans recharger la page
+    window.history.pushState({}, '', `?room=${code}`);
   };
 
   const joinRoom = async () => {
@@ -115,22 +128,30 @@ export default function PlanningPoker() {
     const id = Date.now().toString();
 
     try {
+      // Vérifier si la room existe
+      const roomRef = ref(database, `rooms/${code}`);
+      
       await set(ref(database, `rooms/${code}/players/${id}`), {
         name: playerName.trim(),
         vote: null,
-        isHost: false
+        isHost: false,
+        isObserver: isObserver
       });
 
       setPlayerId(id);
       setRoomCode(code);
       setScreen('game');
       setError('');
+      
+      // Mettre à jour l'URL
+      window.history.pushState({}, '', `?room=${code}`);
     } catch (err) {
       setError('Room introuvable');
     }
   };
 
   const handleVote = async (value) => {
+    if (isObserver) return;
     setSelectedCard(value);
     await set(ref(database, `rooms/${roomCode}/players/${playerId}/vote`), value);
   };
@@ -142,13 +163,8 @@ export default function PlanningPoker() {
   const handleReset = async () => {
     await set(ref(database, `rooms/${roomCode}/revealed`), false);
     
-    const updates = {};
-    Object.keys(players).forEach(pid => {
-      updates[`rooms/${roomCode}/players/${pid}/vote`] = null;
-    });
-    
-    for (const path in updates) {
-      await set(ref(database, path), updates[path]);
+    for (const pid of Object.keys(players)) {
+      await set(ref(database, `rooms/${roomCode}/players/${pid}/vote`), null);
     }
     setSelectedCard(null);
   };
@@ -157,25 +173,50 @@ export default function PlanningPoker() {
     await set(ref(database, `rooms/${roomCode}/story`), newStory);
   };
 
-  const getAverageVote = () => {
-    const numericVotes = Object.values(players)
-      .filter(p => p.vote && !isNaN(parseInt(p.vote)))
-      .map(p => parseInt(p.vote));
-    
-    if (numericVotes.length === 0) return '-';
-    const avg = numericVotes.reduce((a, b) => a + b, 0) / numericVotes.length;
-    return avg.toFixed(1);
+  const copyLink = () => {
+    const url = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
+
+  // Filtrer les joueurs votants (non observateurs)
+  const voters = Object.entries(players)
+    .filter(([_, data]) => !data.isObserver)
+    .map(([id, data]) => ({ id, ...data }));
+
+  const observers = Object.entries(players)
+    .filter(([_, data]) => data.isObserver)
+    .map(([id, data]) => ({ id, ...data }));
 
   const playersList = Object.entries(players).map(([id, data]) => ({
     id,
     ...data
   }));
 
-  const allVoted = playersList.length > 0 && playersList.every(p => p.vote !== null);
-  const votedCount = playersList.filter(p => p.vote !== null).length;
+  // Statistiques des votes
+  const votedCount = voters.filter(p => p.vote !== null).length;
+  const totalVoters = voters.length;
 
-  // Écran d'accueil
+  const getVoteStats = () => {
+    const numericVotes = voters
+      .filter(p => p.vote && !isNaN(parseInt(p.vote)))
+      .map(p => parseInt(p.vote));
+    
+    if (numericVotes.length === 0) return { avg: '-', min: '-', max: '-' };
+    
+    const avg = numericVotes.reduce((a, b) => a + b, 0) / numericVotes.length;
+    const min = Math.min(...numericVotes);
+    const max = Math.max(...numericVotes);
+    
+    return {
+      avg: avg.toFixed(1),
+      min: min.toString(),
+      max: max.toString()
+    };
+  };
+
+  // Écran d'accueil / rejoindre via lien
   if (screen === 'home') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-4">
@@ -184,6 +225,13 @@ export default function PlanningPoker() {
             <h1 className="text-4xl font-bold text-white mb-2">🃏 Planning Poker</h1>
             <p className="text-purple-200">Estimez vos stories en équipe</p>
           </div>
+
+          {hasRoomInURL && (
+            <div className="bg-green-500/20 border border-green-400/30 rounded-xl p-4 mb-6 text-center">
+              <p className="text-green-300 text-sm mb-1">Vous avez été invité à rejoindre</p>
+              <p className="text-white font-mono font-bold text-xl tracking-widest">{joinCode}</p>
+            </div>
+          )}
           
           <div className="flex flex-col gap-4 mb-6">
             <input
@@ -193,50 +241,89 @@ export default function PlanningPoker() {
               onChange={(e) => setPlayerName(e.target.value)}
               className="w-full px-4 py-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400"
             />
+            
+            {/* Choix du rôle */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setIsObserver(false)}
+                className={`flex-1 py-3 rounded-xl font-medium transition-all ${
+                  !isObserver 
+                    ? 'bg-purple-500 text-white' 
+                    : 'bg-white/10 text-purple-300 hover:bg-white/20'
+                }`}
+              >
+                🗳️ Votant
+              </button>
+              <button
+                onClick={() => setIsObserver(true)}
+                className={`flex-1 py-3 rounded-xl font-medium transition-all ${
+                  isObserver 
+                    ? 'bg-purple-500 text-white' 
+                    : 'bg-white/10 text-purple-300 hover:bg-white/20'
+                }`}
+              >
+                👁️ Observateur
+              </button>
+            </div>
           </div>
 
           {error && (
             <p className="text-red-300 text-center mb-4">{error}</p>
           )}
 
-          <div className="flex flex-col gap-3 mb-6">
-            <button
-              onClick={createRoom}
-              className="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105 shadow-lg"
-            >
-              ✨ Créer une nouvelle room
-            </button>
-          </div>
-
-          <div className="relative mb-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/20"></div>
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-transparent px-4 text-purple-300 text-sm">ou rejoindre</span>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Code de la room"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              maxLength={6}
-              className="flex-1 px-4 py-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400 uppercase tracking-widest text-center font-mono"
-            />
+          {hasRoomInURL ? (
+            // Mode: rejoindre via lien partagé
             <button
               onClick={joinRoom}
-              className="px-6 py-3 bg-white/20 text-white font-semibold rounded-xl hover:bg-white/30 transition-all"
+              className="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all transform hover:scale-105 shadow-lg"
             >
-              Rejoindre
+              🚀 Rejoindre la session
             </button>
-          </div>
+          ) : (
+            // Mode: page d'accueil normale
+            <>
+              <div className="flex flex-col gap-3 mb-6">
+                <button
+                  onClick={createRoom}
+                  className="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all transform hover:scale-105 shadow-lg"
+                >
+                  ✨ Créer une nouvelle room
+                </button>
+              </div>
+
+              <div className="relative mb-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-white/20"></div>
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-transparent px-4 text-purple-300 text-sm">ou rejoindre</span>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Code de la room"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                  maxLength={6}
+                  className="flex-1 px-4 py-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400 uppercase tracking-widest text-center font-mono"
+                />
+                <button
+                  onClick={joinRoom}
+                  className="px-6 py-3 bg-white/20 text-white font-semibold rounded-xl hover:bg-white/30 transition-all"
+                >
+                  Rejoindre
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
   }
+
+  const stats = getVoteStats();
 
   // Écran de jeu
   return (
@@ -250,18 +337,23 @@ export default function PlanningPoker() {
               <span className="text-purple-200 text-sm">Room:</span>
               <span className="text-white font-mono font-bold tracking-widest">{roomCode}</span>
               <button
-                onClick={() => navigator.clipboard.writeText(window.location.origin + '?room=' + roomCode)}
+                onClick={copyLink}
                 className="ml-2 text-purple-300 hover:text-white transition-colors"
                 title="Copier le lien"
               >
-                📋
+                {copied ? '✅' : '📋'}
               </button>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-purple-200">👤 {playerName}</span>
+            <span className="text-purple-200">
+              👤 {playerName} {isObserver && '(observateur)'}
+            </span>
             <span className="text-purple-300">•</span>
-            <span className="text-purple-200">{playersList.length} joueur{playersList.length > 1 ? 's' : ''}</span>
+            <span className="text-purple-200">
+              {voters.length} votant{voters.length > 1 ? 's' : ''}
+              {observers.length > 0 && `, ${observers.length} observateur${observers.length > 1 ? 's' : ''}`}
+            </span>
           </div>
         </div>
 
@@ -286,12 +378,13 @@ export default function PlanningPoker() {
             <span className="text-purple-300">
               {roomData.revealed 
                 ? '🎉 Votes révélés !' 
-                : `${votedCount}/${playersList.length} ont voté`}
+                : `${votedCount}/${totalVoters} votant${totalVoters > 1 ? 's' : ''} ${votedCount > 1 ? 'ont' : 'a'} voté`}
             </span>
           </div>
 
-          <div className="flex flex-wrap justify-center gap-6 mb-8">
-            {playersList.map((player) => (
+          {/* Votants */}
+          <div className="flex flex-wrap justify-center gap-6 mb-6">
+            {voters.map((player) => (
               <div key={player.id} className="flex flex-col items-center gap-2">
                 <div 
                   className={`w-16 h-24 rounded-xl flex items-center justify-center text-2xl font-bold transition-all duration-500 ${
@@ -318,11 +411,44 @@ export default function PlanningPoker() {
             ))}
           </div>
 
+          {/* Observateurs */}
+          {observers.length > 0 && (
+            <div className="mb-6 pt-4 border-t border-white/10">
+              <p className="text-purple-400 text-sm text-center mb-3">👁️ Observateurs</p>
+              <div className="flex flex-wrap justify-center gap-3">
+                {observers.map((observer) => (
+                  <span 
+                    key={observer.id}
+                    className={`px-3 py-1 rounded-full text-sm ${
+                      observer.id === playerId 
+                        ? 'bg-yellow-500/30 text-yellow-300' 
+                        : 'bg-white/10 text-purple-300'
+                    }`}
+                  >
+                    {observer.name} {observer.id === playerId && '(vous)'}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Résultats */}
           {roomData.revealed && (
-            <div className="text-center mb-6 p-4 bg-white/10 rounded-xl">
-              <p className="text-purple-300 mb-1">Moyenne des votes</p>
-              <p className="text-4xl font-bold text-white">{getAverageVote()}</p>
+            <div className="mb-6 p-4 bg-white/10 rounded-xl">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <p className="text-purple-300 text-sm mb-1">⬇️ Min</p>
+                  <p className="text-2xl font-bold text-white">{stats.min}</p>
+                </div>
+                <div>
+                  <p className="text-purple-300 text-sm mb-1">📊 Moyenne</p>
+                  <p className="text-3xl font-bold text-white">{stats.avg}</p>
+                </div>
+                <div>
+                  <p className="text-purple-300 text-sm mb-1">⬆️ Max</p>
+                  <p className="text-2xl font-bold text-white">{stats.max}</p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -333,7 +459,7 @@ export default function PlanningPoker() {
               disabled={roomData.revealed || votedCount === 0}
               className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
             >
-              👁️ Révéler ({votedCount}/{playersList.length})
+              👁️ Révéler ({votedCount}/{totalVoters})
             </button>
             <button
               onClick={handleReset}
@@ -344,30 +470,36 @@ export default function PlanningPoker() {
           </div>
         </div>
 
-        {/* Cartes de vote */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-          <p className="text-purple-300 text-sm mb-4 text-center">Choisissez votre estimation</p>
-          <div className="flex flex-wrap justify-center gap-3">
-            {CARD_VALUES.map((value) => (
-              <button
-                key={value}
-                onClick={() => handleVote(value)}
-                disabled={roomData.revealed}
-                className={`w-14 h-20 rounded-xl text-xl font-bold transition-all transform hover:scale-110 hover:-translate-y-2 shadow-lg ${
-                  selectedCard === value
-                    ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white ring-4 ring-purple-300'
-                    : 'bg-white text-gray-800 hover:bg-purple-100'
-                } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:translate-y-0`}
-              >
-                {value}
-              </button>
-            ))}
+        {/* Cartes de vote (uniquement pour les votants) */}
+        {!isObserver ? (
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
+            <p className="text-purple-300 text-sm mb-4 text-center">Choisissez votre estimation</p>
+            <div className="flex flex-wrap justify-center gap-3">
+              {CARD_VALUES.map((value) => (
+                <button
+                  key={value}
+                  onClick={() => handleVote(value)}
+                  disabled={roomData.revealed}
+                  className={`w-14 h-20 rounded-xl text-xl font-bold transition-all transform hover:scale-110 hover:-translate-y-2 shadow-lg ${
+                    selectedCard === value
+                      ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white ring-4 ring-purple-300'
+                      : 'bg-white text-gray-800 hover:bg-purple-100'
+                  } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:translate-y-0`}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 text-center">
+            <p className="text-purple-300">👁️ Vous êtes observateur - vous pouvez voir les votes mais pas participer</p>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="text-center mt-6 text-purple-300 text-sm">
-          <p>🔗 Partagez le code <span className="font-mono font-bold">{roomCode}</span> avec votre équipe</p>
+          <p>🔗 Partagez le code <span className="font-mono font-bold">{roomCode}</span> ou cliquez sur 📋 pour copier le lien</p>
         </div>
       </div>
     </div>
