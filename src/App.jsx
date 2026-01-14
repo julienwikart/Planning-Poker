@@ -27,7 +27,6 @@ const generateRoomCode = () => {
   return code;
 };
 
-// Extraire le code de room depuis l'URL
 const getRoomFromURL = () => {
   const params = new URLSearchParams(window.location.search);
   return params.get('room')?.toUpperCase() || '';
@@ -46,7 +45,6 @@ export default function PlanningPoker() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // Détecter si on arrive via un lien partagé
   const hasRoomInURL = getRoomFromURL() !== '';
 
   // Écouter les changements de la room
@@ -67,6 +65,14 @@ export default function PlanningPoker() {
 
     return () => unsubscribe();
   }, [roomCode]);
+
+  // Synchroniser selectedCard avec les données Firebase
+  useEffect(() => {
+    if (playerId && players[playerId]) {
+      const myVote = players[playerId].vote;
+      setSelectedCard(myVote);
+    }
+  }, [players, playerId]);
 
   // Nettoyer le joueur quand il quitte
   useEffect(() => {
@@ -109,8 +115,6 @@ export default function PlanningPoker() {
     setPlayerId(id);
     setRoomCode(code);
     setScreen('game');
-    
-    // Mettre à jour l'URL sans recharger la page
     window.history.pushState({}, '', `?room=${code}`);
   };
 
@@ -128,9 +132,6 @@ export default function PlanningPoker() {
     const id = Date.now().toString();
 
     try {
-      // Vérifier si la room existe
-      const roomRef = ref(database, `rooms/${code}`);
-      
       await set(ref(database, `rooms/${code}/players/${id}`), {
         name: playerName.trim(),
         vote: null,
@@ -142,8 +143,6 @@ export default function PlanningPoker() {
       setRoomCode(code);
       setScreen('game');
       setError('');
-      
-      // Mettre à jour l'URL
       window.history.pushState({}, '', `?room=${code}`);
     } catch (err) {
       setError('Room introuvable');
@@ -152,7 +151,6 @@ export default function PlanningPoker() {
 
   const handleVote = async (value) => {
     if (isObserver) return;
-    setSelectedCard(value);
     await set(ref(database, `rooms/${roomCode}/players/${playerId}/vote`), value);
   };
 
@@ -161,12 +159,20 @@ export default function PlanningPoker() {
   };
 
   const handleReset = async () => {
+    // Réinitialiser revealed ET tous les votes en une seule opération
+    const updates = {
+      revealed: false
+    };
+    
+    // Mettre à jour la room
     await set(ref(database, `rooms/${roomCode}/revealed`), false);
     
-    for (const pid of Object.keys(players)) {
-      await set(ref(database, `rooms/${roomCode}/players/${pid}/vote`), null);
-    }
-    setSelectedCard(null);
+    // Réinitialiser tous les votes
+    const resetPromises = Object.keys(players).map(pid => 
+      set(ref(database, `rooms/${roomCode}/players/${pid}/vote`), null)
+    );
+    
+    await Promise.all(resetPromises);
   };
 
   const updateStory = async (newStory) => {
@@ -189,13 +195,8 @@ export default function PlanningPoker() {
     .filter(([_, data]) => data.isObserver)
     .map(([id, data]) => ({ id, ...data }));
 
-  const playersList = Object.entries(players).map(([id, data]) => ({
-    id,
-    ...data
-  }));
-
-  // Statistiques des votes
-  const votedCount = voters.filter(p => p.vote !== null).length;
+  // Calcul correct du nombre de votants
+  const votedCount = voters.filter(p => p.vote !== null && p.vote !== undefined).length;
   const totalVoters = voters.length;
 
   const getVoteStats = () => {
@@ -216,7 +217,7 @@ export default function PlanningPoker() {
     };
   };
 
-  // Écran d'accueil / rejoindre via lien
+  // Écran d'accueil
   if (screen === 'home') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-4">
@@ -242,7 +243,6 @@ export default function PlanningPoker() {
               className="w-full px-4 py-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400"
             />
             
-            {/* Choix du rôle */}
             <div className="flex gap-2">
               <button
                 onClick={() => setIsObserver(false)}
@@ -272,7 +272,6 @@ export default function PlanningPoker() {
           )}
 
           {hasRoomInURL ? (
-            // Mode: rejoindre via lien partagé
             <button
               onClick={joinRoom}
               className="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all transform hover:scale-105 shadow-lg"
@@ -280,7 +279,6 @@ export default function PlanningPoker() {
               🚀 Rejoindre la session
             </button>
           ) : (
-            // Mode: page d'accueil normale
             <>
               <div className="flex flex-col gap-3 mb-6">
                 <button
@@ -325,7 +323,6 @@ export default function PlanningPoker() {
 
   const stats = getVoteStats();
 
-  // Écran de jeu
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 p-4">
       <div className="max-w-6xl mx-auto">
@@ -378,7 +375,9 @@ export default function PlanningPoker() {
             <span className="text-purple-300">
               {roomData.revealed 
                 ? '🎉 Votes révélés !' 
-                : `${votedCount}/${totalVoters} votant${totalVoters > 1 ? 's' : ''} ${votedCount > 1 ? 'ont' : 'a'} voté`}
+                : votedCount === 0
+                  ? `En attente des votes (0/${totalVoters})`
+                  : `${votedCount}/${totalVoters} votant${votedCount > 1 ? 's ont' : ' a'} voté`}
             </span>
           </div>
 
@@ -388,14 +387,14 @@ export default function PlanningPoker() {
               <div key={player.id} className="flex flex-col items-center gap-2">
                 <div 
                   className={`w-16 h-24 rounded-xl flex items-center justify-center text-2xl font-bold transition-all duration-500 ${
-                    player.vote !== null
+                    player.vote !== null && player.vote !== undefined
                       ? roomData.revealed 
                         ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white' 
                         : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
                       : 'bg-white/10 border-2 border-dashed border-white/30 text-white/30'
                   }`}
                 >
-                  {player.vote !== null
+                  {player.vote !== null && player.vote !== undefined
                     ? roomData.revealed 
                       ? player.vote 
                       : '✓'
@@ -470,7 +469,7 @@ export default function PlanningPoker() {
           </div>
         </div>
 
-        {/* Cartes de vote (uniquement pour les votants) */}
+        {/* Cartes de vote */}
         {!isObserver ? (
           <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
             <p className="text-purple-300 text-sm mb-4 text-center">Choisissez votre estimation</p>
