@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, onValue, remove } from 'firebase/database';
+import { getDatabase, ref, set, onValue, remove, get } from 'firebase/database';
 
 // 🔥 REMPLACEZ PAR VOTRE CONFIG FIREBASE
 const firebaseConfig = {
@@ -13,10 +13,12 @@ const firebaseConfig = {
   appId: "1:770949471783:web:e9a7ad49d7787706a5b802"
 };
 
+
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
 const CARD_VALUES = ['0', '1', '2', '3', '5', '8', '13', '21', '?', '☕'];
+const ROOM_EXPIRY_HOURS = 24;
 
 const generateRoomCode = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -32,6 +34,13 @@ const getRoomFromURL = () => {
   return params.get('room')?.toUpperCase() || '';
 };
 
+const isRoomExpired = (createdAt) => {
+  if (!createdAt) return false;
+  const now = Date.now();
+  const expiryTime = ROOM_EXPIRY_HOURS * 60 * 60 * 1000;
+  return (now - createdAt) > expiryTime;
+};
+
 export default function PlanningPoker() {
   const [screen, setScreen] = useState('home');
   const [playerName, setPlayerName] = useState('');
@@ -40,26 +49,74 @@ export default function PlanningPoker() {
   const [joinCode, setJoinCode] = useState(getRoomFromURL());
   const [isObserver, setIsObserver] = useState(false);
   const [players, setPlayers] = useState({});
-  const [roomData, setRoomData] = useState({ revealed: false, story: '' });
+  const [roomData, setRoomData] = useState({ revealed: false, story: '', createdAt: null });
   const [selectedCard, setSelectedCard] = useState(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [roomExpired, setRoomExpired] = useState(false);
 
   const hasRoomInURL = getRoomFromURL() !== '';
 
+  // Vérifier si la room dans l'URL est expirée avant même de rejoindre
+  useEffect(() => {
+    const checkRoomFromURL = async () => {
+      const urlRoomCode = getRoomFromURL();
+      if (!urlRoomCode) return;
+
+      try {
+        const roomRef = ref(database, `rooms/${urlRoomCode}`);
+        const snapshot = await get(roomRef);
+        const data = snapshot.val();
+
+        if (!data) {
+          setError('Cette room n\'existe pas ou a été supprimée');
+          setJoinCode('');
+          window.history.pushState({}, '', window.location.pathname);
+        } else if (isRoomExpired(data.createdAt)) {
+          // Room expirée : on la supprime
+          await remove(roomRef);
+          setError('Cette room a expiré et a été supprimée');
+          setJoinCode('');
+          window.history.pushState({}, '', window.location.pathname);
+        }
+      } catch (err) {
+        console.error('Erreur vérification room:', err);
+      }
+    };
+
+    checkRoomFromURL();
+  }, []);
+
+  // Écouter les changements de la room
   useEffect(() => {
     if (!roomCode) return;
+
     const roomRef = ref(database, `rooms/${roomCode}`);
-    const unsubscribe = onValue(roomRef, (snapshot) => {
+    const unsubscribe = onValue(roomRef, async (snapshot) => {
       const data = snapshot.val();
-      if (data) {
-        setPlayers(data.players || {});
-        setRoomData({
-          revealed: data.revealed || false,
-          story: data.story || ''
-        });
+      
+      if (!data) {
+        // Room supprimée
+        setRoomExpired(true);
+        return;
       }
+
+      // Vérifier l'expiration
+      if (isRoomExpired(data.createdAt)) {
+        // Supprimer la room expirée
+        await remove(roomRef);
+        setRoomExpired(true);
+        return;
+      }
+
+      setPlayers(data.players || {});
+      setRoomData({
+        revealed: data.revealed || false,
+        story: data.story || '',
+        createdAt: data.createdAt
+      });
     });
+
     return () => unsubscribe();
   }, [roomCode]);
 
@@ -103,6 +160,7 @@ export default function PlanningPoker() {
     });
     setPlayerId(id);
     setRoomCode(code);
+    setRoomExpired(false);
     setScreen('game');
     window.history.pushState({}, '', `?room=${code}`);
   };
@@ -118,20 +176,40 @@ export default function PlanningPoker() {
     }
     const code = joinCode.toUpperCase().trim();
     const id = Date.now().toString();
+
     try {
+      // Vérifier si la room existe et n'est pas expirée
+      const roomRef = ref(database, `rooms/${code}`);
+      const snapshot = await get(roomRef);
+      const data = snapshot.val();
+
+      if (!data) {
+        setError('Cette room n\'existe pas');
+        return;
+      }
+
+      if (isRoomExpired(data.createdAt)) {
+        // Supprimer la room expirée
+        await remove(roomRef);
+        setError('Cette room a expiré et a été supprimée');
+        return;
+      }
+
       await set(ref(database, `rooms/${code}/players/${id}`), {
         name: playerName.trim(),
         vote: null,
         isHost: false,
         isObserver: isObserver
       });
+
       setPlayerId(id);
       setRoomCode(code);
+      setRoomExpired(false);
       setScreen('game');
       setError('');
       window.history.pushState({}, '', `?room=${code}`);
     } catch (err) {
-      setError('Room introuvable');
+      setError('Erreur lors de la connexion');
     }
   };
 
@@ -163,6 +241,24 @@ export default function PlanningPoker() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const backToHome = () => {
+    setScreen('home');
+    setRoomCode('');
+    setRoomExpired(false);
+    setError('');
+    setJoinCode('');
+    window.history.pushState({}, '', window.location.pathname);
+  };
+
+  const formatTimeRemaining = () => {
+    if (!roomData.createdAt) return '';
+    const elapsed = Date.now() - roomData.createdAt;
+    const remaining = (ROOM_EXPIRY_HOURS * 60 * 60 * 1000) - elapsed;
+    const hours = Math.floor(remaining / (60 * 60 * 1000));
+    const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+    return `${hours}h ${minutes}m`;
+  };
+
   const voters = Object.entries(players)
     .filter(([_, data]) => !data.isObserver)
     .map(([id, data]) => ({ id, ...data }));
@@ -187,6 +283,29 @@ export default function PlanningPoker() {
     };
   };
 
+  // Écran room expirée
+  if (roomExpired) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl border border-orange-100 p-8 w-full max-w-md text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-gray-400 to-gray-500 rounded-2xl mb-4 shadow-lg">
+            <span className="text-3xl">⏰</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Room expirée</h1>
+          <p className="text-gray-500 mb-6">
+            Cette session a expiré après {ROOM_EXPIRY_HOURS} heures d'inactivité et a été automatiquement supprimée.
+          </p>
+          <button
+            onClick={backToHome}
+            className="w-full py-3 bg-gradient-to-r from-orange-500 to-rose-500 text-white font-semibold rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg"
+          >
+            Créer une nouvelle session
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (screen === 'home') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 flex items-center justify-center p-4">
@@ -199,7 +318,7 @@ export default function PlanningPoker() {
             <p className="text-gray-500 text-sm">Estimation collaborative pour équipes agiles</p>
           </div>
 
-          {hasRoomInURL && (
+          {hasRoomInURL && joinCode && !error && (
             <div className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-xl p-4 mb-6 text-center">
               <p className="text-orange-700 text-sm mb-1">Vous avez été invité à rejoindre</p>
               <p className="text-gray-800 font-mono font-bold text-xl tracking-widest">{joinCode}</p>
@@ -249,7 +368,7 @@ export default function PlanningPoker() {
             <p className="text-red-500 text-sm text-center mb-4 bg-red-50 py-2 rounded-lg">{error}</p>
           )}
 
-          {hasRoomInURL ? (
+          {hasRoomInURL && joinCode && !error ? (
             <button
               onClick={joinRoom}
               className="w-full py-3 bg-gradient-to-r from-orange-500 to-rose-500 text-white font-semibold rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
@@ -279,7 +398,10 @@ export default function PlanningPoker() {
                   type="text"
                   placeholder="CODE"
                   value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                  onChange={(e) => {
+                    setJoinCode(e.target.value.toUpperCase());
+                    setError('');
+                  }}
                   maxLength={6}
                   className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 uppercase tracking-widest text-center font-mono focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
                 />
@@ -292,6 +414,10 @@ export default function PlanningPoker() {
               </div>
             </>
           )}
+
+          <p className="text-xs text-gray-400 text-center mt-6">
+            Les sessions expirent automatiquement après {ROOM_EXPIRY_HOURS}h
+          </p>
         </div>
       </div>
     );
@@ -329,6 +455,9 @@ export default function PlanningPoker() {
                 )}
               </button>
             </div>
+            <span className="text-xs text-gray-400" title="Temps restant avant expiration">
+              ⏱️ {formatTimeRemaining()}
+            </span>
           </div>
           <div className="flex items-center gap-3 text-sm">
             <span className="text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
