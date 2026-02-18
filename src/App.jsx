@@ -271,15 +271,41 @@ export default function PlanningPoker() {
   const totalVoters = voters.length;
 
   const getVoteStats = () => {
-    const numericVotes = voters
-      .filter(p => p.vote && !isNaN(parseInt(p.vote)))
+    const allVotes = voters.filter(p => p.vote !== null && p.vote !== undefined);
+    const numericVotes = allVotes
+      .filter(p => !isNaN(parseInt(p.vote)))
       .map(p => parseInt(p.vote));
-    if (numericVotes.length === 0) return { avg: '-', min: '-', max: '-' };
+
+    const distribution = {};
+    allVotes.forEach(p => {
+      distribution[p.vote] = (distribution[p.vote] || 0) + 1;
+    });
+
+    const maxCount = Math.max(...Object.values(distribution), 0);
+    const mode = Object.keys(distribution).filter(v => distribution[v] === maxCount);
+
+    if (numericVotes.length === 0)
+      return { avg: '-', min: '-', max: '-', delta: null, distribution, mode, consensus: null };
+
     const avg = numericVotes.reduce((a, b) => a + b, 0) / numericVotes.length;
+    const min = Math.min(...numericVotes);
+    const max = Math.max(...numericVotes);
+    const delta = max - min;
+
+    let consensus;
+    if (delta === 0) consensus = 'perfect';
+    else if (delta <= 2) consensus = 'good';
+    else if (delta <= 5) consensus = 'moderate';
+    else consensus = 'divergent';
+
     return {
       avg: avg.toFixed(1),
-      min: Math.min(...numericVotes).toString(),
-      max: Math.max(...numericVotes).toString()
+      min: min.toString(),
+      max: max.toString(),
+      delta,
+      distribution,
+      mode,
+      consensus,
     };
   };
 
@@ -548,14 +574,22 @@ export default function PlanningPoker() {
           )}
 
           {/* Results */}
-          {roomData.revealed && (
-            <div className="bg-gradient-to-r from-orange-50 to-rose-50 rounded-xl p-5 mb-6 border border-orange-100">
+          {roomData.revealed && (() => {
+            const consensusTheme = {
+              perfect:  { bg: 'from-green-50 to-emerald-50',  border: 'border-green-100',  divider: 'border-green-200' },
+              good:     { bg: 'from-blue-50 to-sky-50',        border: 'border-blue-100',   divider: 'border-blue-200' },
+              moderate: { bg: 'from-orange-50 to-rose-50',     border: 'border-orange-100', divider: 'border-orange-200' },
+              divergent:{ bg: 'from-red-50 to-rose-50',        border: 'border-red-100',    divider: 'border-red-200' },
+            };
+            const theme = consensusTheme[stats.consensus] || consensusTheme.moderate;
+            return (
+            <div className={`bg-gradient-to-r ${theme.bg} rounded-xl p-5 mb-6 border ${theme.border}`}>
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
                   <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">⬇️ Min</p>
                   <p className="text-3xl font-bold text-gray-800">{stats.min}</p>
                 </div>
-                <div className="border-x border-orange-200">
+                <div className={`border-x ${theme.divider}`}>
                   <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">📊 Moyenne</p>
                   <p className="text-4xl font-bold bg-gradient-to-r from-orange-500 to-rose-500 bg-clip-text text-transparent">{stats.avg}</p>
                 </div>
@@ -564,8 +598,54 @@ export default function PlanningPoker() {
                   <p className="text-3xl font-bold text-gray-800">{stats.max}</p>
                 </div>
               </div>
+              {stats.consensus && (
+                <div className="mt-4 text-center">
+                  <span className={`inline-block px-3 py-1 rounded-full text-sm font-semibold ${
+                    stats.consensus === 'perfect'  ? 'bg-green-100 text-green-700' :
+                    stats.consensus === 'good'     ? 'bg-blue-100 text-blue-700' :
+                    stats.consensus === 'moderate' ? 'bg-orange-100 text-orange-700' :
+                                                     'bg-red-100 text-red-700'
+                  }`}>
+                    {stats.consensus === 'perfect'  ? '✅ Consensus parfait' :
+                     stats.consensus === 'good'     ? '👍 Bon consensus' :
+                     stats.consensus === 'moderate' ? '💬 À discuter' :
+                                                      '⚠️ Forte divergence'}
+                  </span>
+                </div>
+              )}
+              {Object.keys(stats.distribution).length > 0 && (
+                <div className={`mt-4 pt-4 border-t ${theme.border}`}>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Répartition des votes</p>
+                  <div className="space-y-2">
+                    {['0','1','2','3','5','8','13','21','?','☕']
+                      .filter(v => stats.distribution[v])
+                      .map(value => {
+                        const count = stats.distribution[value];
+                        const pct = Math.round((count / votedCount) * 100);
+                        const isMode = stats.mode.includes(value);
+                        return (
+                          <div key={value} className="flex items-center gap-2">
+                            <span className={`w-8 text-sm font-bold text-right ${isMode ? 'text-orange-600' : 'text-gray-600'}`}>
+                              {value}
+                            </span>
+                            <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${isMode ? 'bg-gradient-to-r from-orange-400 to-rose-400' : 'bg-gray-300'}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-gray-500 w-20 text-right">
+                              {count} votant{count > 1 ? 's' : ''} ({pct}%)
+                            </span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
+            );
+          })()}
 
           {/* Controls */}
           <div className="flex justify-center gap-3">
